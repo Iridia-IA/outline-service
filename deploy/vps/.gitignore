@@ -1,0 +1,8 @@
+# Secretos — NUNCA versionar
+.env
+*.pem
+*.key
+
+# Datos y logs del stack
+data/
+logs/

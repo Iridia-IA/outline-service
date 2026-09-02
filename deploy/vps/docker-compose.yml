@@ -1,0 +1,271 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Outline — VPS production stack (iridia.cloud). Docker Compose, SIN Caddy.
+#
+# MODELO DE SEGURIDAD (ver deploy/vps/README.md § Checklist de seguridad):
+#   • VPS COMPARTIDA: el Caddy del HOST (nativo, systemd, ACME propia) ya es
+#     dueño de 80/443 para 7 sitios. Este stack NO tiene servicio caddy. Los dos
+#     upstreams publican SOLO EN LOOPBACK (127.0.0.1:3300 app, 127.0.0.1:9100
+#     MinIO S3) y el Caddy del host les hace reverse-proxy. Postgres y Redis no
+#     publican ningún puerto.
+#     Loopback + ausencia de `ports:` ES el control: NO confiar en UFW. Docker
+#     instala su propio DNAT en PREROUTING/DOCKER-USER, que saltea la cadena
+#     INPUT de UFW — un puerto publicado en 0.0.0.0 es alcanzable incluso con
+#     `ufw default deny incoming`. Todo `ports:` de acá DEBE quedar en 127.0.0.1.
+#   • Redes SEGMENTADAS:
+#       - outline-data (internal:true, sin egress) → postgres, redis, minio, app
+#       - outline-edge (bridge, con egress)        → app (Google OAuth, Resend,
+#                                                    embeds) y minio (publica :9100)
+#     MinIO va en las dos porque un contenedor en una red `internal:true` no
+#     puede publicar puertos al host.
+#   • Secretos desde .env (chmod 600, git-ignored, generado por
+#     scripts/gen-secrets.sh). Las passwords se interpolan en los DSN acá, así
+#     que hay una sola fuente de verdad y no pueden divergir.
+#   • outline-app recibe un ALLOWLIST EXPLÍCITO de env vars (no `env_file`): una
+#     var nueva en .env NO llega al container hasta agregarla acá a mano.
+#
+# Arranque:  docker compose up -d outline-postgres outline-redis outline-minio
+#            docker compose up -d outline-app
+# Validar:   docker compose config
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: outline-vps
+
+networks:
+  # Sin egress: nadie de acá sale a internet. Publicar puertos NO funciona
+  # sobre una red internal — por eso app y minio están además en outline-edge.
+  outline-data:
+    name: outline-data
+    driver: bridge
+    internal: true
+  # Con egress + puertos publicados en loopback.
+  outline-edge:
+    name: outline-edge
+    driver: bridge
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # PostgreSQL 16 — base de datos de Outline.
+  # Sin puertos publicados. Solo alcanzable desde outline-data.
+  # (Outline requiere PG >= 12; se usa 16-alpine por consistencia con el resto
+  #  de los stacks de la caja — postiz, atlas, glitchtip.)
+  # ───────────────────────────────────────────────────────────────────────────
+  outline-postgres:
+    image: postgres:16-alpine
+    container_name: outline-postgres
+    restart: unless-stopped
+    networks: [outline-data]
+    environment:
+      POSTGRES_DB: outline
+      POSTGRES_USER: outline
+      POSTGRES_PASSWORD: ${OUTLINE_POSTGRES_PASSWORD:?falta OUTLINE_POSTGRES_PASSWORD en .env (correr scripts/gen-secrets.sh)}
+      # Outline exige encoding/collation predecibles para la búsqueda full-text.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U outline -d outline"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging: *default-logging
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Redis 7 — cache, colas y canal de colaboración en tiempo real.
+  # Con password aunque esté en red interna (defensa en profundidad: si alguna
+  # vez alguien agrega un `ports:` por error, no queda abierto).
+  # ───────────────────────────────────────────────────────────────────────────
+  outline-redis:
+    image: redis:7-alpine
+    container_name: outline-redis
+    restart: unless-stopped
+    networks: [outline-data]
+    command: redis-server --requirepass ${OUTLINE_REDIS_PASSWORD:?falta OUTLINE_REDIS_PASSWORD en .env} --appendonly yes --save 60 1
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$OUTLINE_REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    environment:
+      OUTLINE_REDIS_PASSWORD: ${OUTLINE_REDIS_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *default-logging
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # MinIO — storage S3-compatible para adjuntos, imágenes y avatares.
+  #
+  # DEBE ser alcanzable desde el navegador. Verificado en el código de Outline:
+  #   · sube por presigned POST/PUT directo al bucket  (server/storage/files/S3Storage.ts)
+  #   · descarga por redirect 302 a URL firmada        (server/routes/api/attachments/attachments.ts)
+  # Un MinIO solo en red interna rompe TODOS los adjuntos. De ahí el site
+  # s3.iridia.cloud en el Caddy del host apuntando a 127.0.0.1:9100.
+  #
+  # La consola (:9101) NO se publica en Caddy — solo túnel SSH:
+  #   ssh -L 9101:127.0.0.1:9101 lvallejos@82.29.56.191  → http://localhost:9101
+  # ───────────────────────────────────────────────────────────────────────────
+  outline-minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: outline-minio
+    restart: unless-stopped
+    networks: [outline-data, outline-edge]
+    command: server --address ":9000" --console-address ":9001" /data
+    environment:
+      MINIO_ROOT_USER: ${OUTLINE_MINIO_ROOT_USER:-outline}
+      MINIO_ROOT_PASSWORD: ${OUTLINE_MINIO_ROOT_PASSWORD:?falta OUTLINE_MINIO_ROOT_PASSWORD en .env}
+      # CORS: el navegador hace el PUT/POST del upload contra s3.iridia.cloud
+      # desde el origen de la app. Sin esto el upload falla en preflight.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${URL:?falta URL en .env}
+    volumes:
+      - ./data/minio:/data
+    ports:
+      - "127.0.0.1:9100:9000"   # API S3  → detrás de s3.iridia.cloud
+      - "127.0.0.1:9101:9001"   # consola → SOLO túnel SSH, no va en Caddy
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *default-logging
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # minio-init — one-shot: crea el bucket y garantiza que sea PRIVADO.
+  # Idempotente: `mc mb --ignore-existing` + `mc anonymous set none`.
+  # El acceso es siempre por URL firmada; nunca anónimo.
+  # ───────────────────────────────────────────────────────────────────────────
+  outline-minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: outline-minio-init
+    restart: "no"
+    networks: [outline-data]
+    depends_on:
+      outline-minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${OUTLINE_MINIO_ROOT_USER:-outline}
+      MINIO_ROOT_PASSWORD: ${OUTLINE_MINIO_ROOT_PASSWORD}
+      BUCKET: ${AWS_S3_UPLOAD_BUCKET_NAME:-outline}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        mc alias set local http://outline-minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$BUCKET"
+        mc anonymous set none "local/$$BUCKET"
+        echo "bucket $$BUCKET listo y privado"
+    logging: *default-logging
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Outline — app (web + websockets + collaboration + worker en un proceso).
+  #
+  # Imagen OFICIAL pinneada. El fork Iridia-IA/outline-service está a diff cero
+  # de upstream en v1.10.0, y esta imagen fue buildeada de ese mismo commit
+  # (7c34b79). Cuando exista branding propio (Fase 2), cambiar OUTLINE_IMAGE en
+  # .env por ghcr.io/iridia-ia/outline-service:<tag> — nada más cambia acá.
+  #
+  # Las migraciones de Sequelize corren solas al bootear.
+  # ───────────────────────────────────────────────────────────────────────────
+  outline-app:
+    image: ${OUTLINE_IMAGE:-outlinewiki/outline:1.10.0}
+    container_name: outline-app
+    restart: unless-stopped
+    networks: [outline-data, outline-edge]
+    depends_on:
+      outline-postgres:
+        condition: service_healthy
+      outline-redis:
+        condition: service_healthy
+      outline-minio:
+        condition: service_healthy
+      # No alcanza con que MinIO esté healthy: el bucket tiene que EXISTIR antes
+      # de que la app acepte un upload. Outline no lo crea.
+      outline-minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:3300:3000"
+    # ALLOWLIST EXPLÍCITO — no usar env_file. Una var nueva en .env no llega
+    # hasta que se agrega acá (mismo criterio que atlas-api).
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      URL: ${URL:?falta URL en .env}
+      SECRET_KEY: ${SECRET_KEY:?falta SECRET_KEY en .env (correr scripts/gen-secrets.sh)}
+      UTILS_SECRET: ${UTILS_SECRET:?falta UTILS_SECRET en .env (correr scripts/gen-secrets.sh)}
+
+      DATABASE_URL: postgres://outline:${OUTLINE_POSTGRES_PASSWORD}@outline-postgres:5432/outline
+      PGSSLMODE: disable
+      REDIS_URL: redis://:${OUTLINE_REDIS_PASSWORD}@outline-redis:6379
+
+      # Caddy del host termina TLS y setea X-Forwarded-*. El rate limiter y el
+      # audit de Outline leen XFF → el site de Caddy DEBE resetearlo al peer real.
+      FORCE_HTTPS: "true"
+      PROXY_HEADERS_TRUSTED: "true"
+
+      # Regla de dimensionamiento: RAM disponible / 512MB. La caja está compartida
+      # con langfuse + atlas + postiz; 1 proceso alcanza para el equipo.
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
+
+      # ── Storage (MinIO, S3-compatible) ──────────────────────────────────────
+      # AWS_S3_UPLOAD_BUCKET_URL NO debe contener el nombre del bucket como
+      # subdominio: si el hostname arranca con el bucket, Outline descarta el
+      # endpoint custom y firma contra AWS real. Por eso path-style.
+      FILE_STORAGE: s3
+      AWS_S3_UPLOAD_BUCKET_URL: ${AWS_S3_UPLOAD_BUCKET_URL:?falta AWS_S3_UPLOAD_BUCKET_URL en .env}
+      AWS_S3_UPLOAD_BUCKET_NAME: ${AWS_S3_UPLOAD_BUCKET_NAME:-outline}
+      AWS_S3_FORCE_PATH_STYLE: "true"
+      AWS_S3_UPLOAD_METHOD: ${AWS_S3_UPLOAD_METHOD:-post}
+      AWS_S3_ACL: private
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${OUTLINE_MINIO_ROOT_USER:-outline}
+      AWS_SECRET_ACCESS_KEY: ${OUTLINE_MINIO_ROOT_PASSWORD}
+      FILE_STORAGE_UPLOAD_MAX_SIZE: ${FILE_STORAGE_UPLOAD_MAX_SIZE:-262144000}
+
+      # ── Auth: Google Workspace (iridia-ai.com) ──────────────────────────────
+      # Redirect URI a registrar: ${URL}/auth/google.callback
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?falta GOOGLE_CLIENT_ID en .env}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?falta GOOGLE_CLIENT_SECRET en .env}
+
+      # ── Mail: Resend por SMTP ───────────────────────────────────────────────
+      SMTP_HOST: ${SMTP_HOST:-smtp.resend.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
+      SMTP_USERNAME: ${SMTP_USERNAME:-resend}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?falta SMTP_PASSWORD en .env (API key de Resend)}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:?falta SMTP_FROM_EMAIL en .env}
+      SMTP_REPLY_EMAIL: ${SMTP_REPLY_EMAIL:-}
+
+      RATE_LIMITER_ENABLED: ${RATE_LIMITER_ENABLED:-true}
+      RATE_LIMITER_REQUESTS: ${RATE_LIMITER_REQUESTS:-1000}
+      RATE_LIMITER_DURATION_WINDOW: ${RATE_LIMITER_DURATION_WINDOW:-60}
+
+      DEFAULT_LANGUAGE: ${DEFAULT_LANGUAGE:-es_ES}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TELEMETRY: "false"
+      ENABLE_UPDATES: "false"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    logging: *default-logging

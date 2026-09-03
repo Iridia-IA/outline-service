@@ -250,6 +250,13 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?falta GOOGLE_CLIENT_ID en .env}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?falta GOOGLE_CLIENT_SECRET en .env}
 
+      # ── Import: Notion (OAuth) ──────────────────────────────────────────────
+      # Integracion publica creada en notion.so/my-integrations.
+      # Redirect URI a registrar: ${URL}/api/notion.callback
+      # Opcionales: sin ellas el importador de Notion no aparece en Settings.
+      NOTION_CLIENT_ID: ${NOTION_CLIENT_ID:-}
+      NOTION_CLIENT_SECRET: ${NOTION_CLIENT_SECRET:-}
+
       # ── Mail: Resend por SMTP ───────────────────────────────────────────────
       SMTP_HOST: ${SMTP_HOST:-smtp.resend.com}
       SMTP_PORT: ${SMTP_PORT:-465}

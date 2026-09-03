@@ -43,6 +43,20 @@ export type NotionPage = PageObjectResponse & {
   children: Block[];
 };
 
+/**
+ * The structural shape shared by Notion's media payloads – image, file, pdf
+ * and video blocks.
+ *
+ * The SDK models each as a closed union of `file` and `external`, but the API
+ * also returns variants those types do not cover, so media is read
+ * structurally rather than by trusting the discriminant.
+ */
+interface NotionMedia {
+  type?: string;
+  file?: { url?: string };
+  external?: { url?: string };
+}
+
 /** Convert Notion blocks to Outline data. */
 export class NotionConverter {
   /**
@@ -420,21 +434,57 @@ export class NotionConverter {
     };
   }
 
+  /**
+   * Read the URL out of a Notion media payload.
+   *
+   * Notion tags media as `file` or `external`, but the tag set is open – newer
+   * variants reach the API before the SDK types describe them, and reading the
+   * wrong branch throws. Take whichever URL is actually present, and report the
+   * variant when neither is, so one unsupported block cannot fail an import.
+   *
+   * @param media the media payload from an image, file, pdf or video block.
+   * @returns the media URL, or undefined when the variant carries none.
+   */
+  private static mediaUrl(media: NotionMedia): string | undefined {
+    const url = media.file?.url ?? media.external?.url;
+
+    if (!url) {
+      Logger.warn("Encountered unsupported Notion media variant", {
+        type: media.type,
+        keys: Object.keys(media),
+      });
+    }
+
+    return url;
+  }
+
   private static file(item: FileBlockObjectResponse) {
+    const href = this.mediaUrl(item.file);
+
+    if (!href) {
+      return undefined;
+    }
+
     return {
       type: "attachment",
       attrs: {
-        href: "file" in item.file ? item.file.file.url : item.file.external.url,
+        href,
         title: item.file.name,
       },
     };
   }
 
   private static pdf(item: PdfBlockObjectResponse) {
+    const href = this.mediaUrl(item.pdf);
+
+    if (!href) {
+      return undefined;
+    }
+
     return {
       type: "attachment",
       attrs: {
-        href: "file" in item.pdf ? item.pdf.file.url : item.pdf.external.url,
+        href,
         title: item.pdf.caption.map(this.rich_text_to_plaintext).join(""),
       },
     };
@@ -471,16 +521,19 @@ export class NotionConverter {
   }
 
   private static image(item: ImageBlockObjectResponse) {
+    const src = this.mediaUrl(item.image);
+
+    if (!src) {
+      return undefined;
+    }
+
     return {
       type: "paragraph",
       content: [
         {
           type: "image",
           attrs: {
-            src:
-              "file" in item.image
-                ? item.image.file.url
-                : item.image.external.url,
+            src,
             alt: item.image.caption.map(this.rich_text_to_plaintext).join(""),
           },
         },
@@ -658,11 +711,18 @@ export class NotionConverter {
   }
 
   private static video(item: VideoBlockObjectResponse) {
+    const src = this.mediaUrl(item.video);
+
+    if (!src) {
+      return undefined;
+    }
+
+    // Notion-hosted video plays inline; anything else is embedded by URL.
     if (item.video.type === "file") {
       return {
         type: "video",
         attrs: {
-          src: item.video.file.url,
+          src,
           title: item.video.caption.map(this.rich_text_to_plaintext).join(""),
         },
       };
@@ -671,7 +731,7 @@ export class NotionConverter {
     return {
       type: "embed",
       attrs: {
-        href: item.video.external.url,
+        href: src,
       },
     };
   }

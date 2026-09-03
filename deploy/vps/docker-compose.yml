@@ -211,6 +211,9 @@ services:
       NODE_ENV: production
       PORT: "3000"
       URL: ${URL:?falta URL en .env}
+      # Nombre del producto en titulos, interfaz y mails. El manifest de la PWA
+      # no lo lee de aca: se hornea en el build de la imagen.
+      APP_NAME: ${APP_NAME:-Outline}
       SECRET_KEY: ${SECRET_KEY:?falta SECRET_KEY en .env (correr scripts/gen-secrets.sh)}
       UTILS_SECRET: ${UTILS_SECRET:?falta UTILS_SECRET en .env (correr scripts/gen-secrets.sh)}
 

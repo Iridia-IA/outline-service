@@ -57,4 +57,60 @@ describe("NotionConverter", () => {
     expect(response.content).toEqual([]);
     expect(ProsemirrorHelper.toProsemirror(response)).toBeInstanceOf(Node);
   });
+
+  it("drops media with an unrecognized file variant", () => {
+    // The variant name is deliberately not one Notion is known to send – the
+    // converter must fall back on shape, not on a known discriminant value.
+    const response = NotionConverter.page({
+      children: [
+        {
+          object: "block",
+          id: "2d2d236d-0cc4-817c-80e3-ca7d0e4f4a70",
+          type: "image",
+          has_children: false,
+          image: {
+            type: "some_future_type",
+            some_future_type: { id: "f7a1c0de-0000-4000-8000-000000000001" },
+            caption: [],
+          },
+        },
+      ],
+    } as unknown as NotionPage);
+
+    expect(response.content).toEqual([]);
+    expect(ProsemirrorHelper.toProsemirror(response)).toBeInstanceOf(Node);
+  });
+
+  it("converts an image with a file variant", () => {
+    const response = NotionConverter.page({
+      children: [
+        {
+          object: "block",
+          id: "2d2d236d-0cc4-811d-b94f-d1d68b476b52",
+          type: "image",
+          has_children: false,
+          image: {
+            type: "file",
+            file: {
+              url: "https://example.com/i.png",
+              expiry_time: "2026-01-01T00:00:00.000Z",
+            },
+            caption: [],
+          },
+        },
+      ],
+    } as unknown as NotionPage);
+
+    expect(response.content).toEqual([
+      {
+        type: "paragraph",
+        content: [
+          {
+            type: "image",
+            attrs: { src: "https://example.com/i.png", alt: "" },
+          },
+        ],
+      },
+    ]);
+  });
 });

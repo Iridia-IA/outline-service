@@ -1,8 +1,7 @@
 name: "Close Stale PRs"
 on:
+  # Upstream maintenance automation; disabled in this fork, run manually if needed.
   workflow_dispatch:
-  schedule:
-    - cron: "30 1 * * *"
 
 permissions:
   issues: write

@@ -1,9 +1,7 @@
 name: Update Node.js LTS
 
 on:
-  schedule:
-    # Run every Monday at 9:00 UTC
-    - cron: "0 9 * * 1"
+  # Upstream maintenance automation; disabled in this fork, run manually if needed.
   workflow_dispatch:
 
 permissions:

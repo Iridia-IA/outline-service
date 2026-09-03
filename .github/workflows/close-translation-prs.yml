@@ -1,12 +1,8 @@
 name: Auto Close Translation PRs
 
 on:
-  pull_request_target:
-    types:
-      - opened
-      - synchronize
-    paths:
-      - "shared/i18n/locales/**"
+  # Upstream maintenance automation; disabled in this fork, run manually if needed.
+  workflow_dispatch:
 
 jobs:
   close-translation-prs:

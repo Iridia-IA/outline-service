@@ -1,9 +1,7 @@
 name: Publish nightly build
 
 on:
-  schedule:
-    # 03:00 UTC daily
-    - cron: "0 3 * * *"
+  # The nightly schedule is disabled in this fork; trigger manually if needed.
   workflow_dispatch:
 
 jobs:
@@ -12,7 +10,6 @@ jobs:
     secrets: inherit
     with:
       ref: main
-      environment: dockerhub-nightly
       flavor: |
         latest=false
       tags: |

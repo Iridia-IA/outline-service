@@ -8,7 +8,7 @@ WORKDIR $APP_PATH
 # ---
 FROM node:26.3.0-slim AS runner
 
-LABEL org.opencontainers.image.source="https://github.com/outline/outline"
+LABEL org.opencontainers.image.source="https://github.com/Iridia-IA/outline-service"
 
 ARG APP_PATH
 WORKDIR $APP_PATH

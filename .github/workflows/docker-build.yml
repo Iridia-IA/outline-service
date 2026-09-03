@@ -19,15 +19,19 @@ on:
         type: string
         required: false
         default: ""
-      environment:
-        description: Environment used to gate publishing of the manifest.
+      app_name:
+        description: Product name baked into the client build (PWA manifest).
         type: string
         required: false
-        default: dockerhub
+        default: Outline
 
 env:
-  IMAGE_NAME: outlinewiki/outline
-  BASE_IMAGE_NAME: outlinewiki/outline-base
+  IMAGE_NAME: ghcr.io/iridia-ia/outline-service
+  BASE_IMAGE_NAME: ghcr.io/iridia-ia/outline-service-base
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build:
@@ -36,9 +40,7 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: blacksmith-8vcpu-ubuntu-2404
-          - platform: linux/arm64
-            runner: blacksmith-8vcpu-ubuntu-2404-arm
+            runner: ubuntu-latest
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Prepare
@@ -51,8 +53,8 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
-      - name: Setup Blacksmith Builder
-        uses: useblacksmith/setup-docker-builder@ab5c1da94f53f5cd75c1038092aa276dddfccbba  # v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Docker base meta
         id: base_meta
@@ -63,15 +65,16 @@ jobs:
           flavor: ${{ inputs.flavor }}
           tags: ${{ inputs.tags }}
 
-      - name: Login to Docker Hub
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push base image
         id: base_build
-        uses: useblacksmith/build-push-action@fb9e3e6a9299c78462bfadd0d93352c316adc9b8  # v2
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.base
@@ -80,6 +83,8 @@ jobs:
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           platforms: ${{ matrix.platform }}
           pull: false
+          build-args: |
+            APP_NAME=${{ inputs.app_name }}
 
       - name: Docker meta
         id: meta
@@ -92,7 +97,7 @@ jobs:
 
       - name: Build and push
         id: build
-        uses: useblacksmith/build-push-action@fb9e3e6a9299c78462bfadd0d93352c316adc9b8  # v2
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
@@ -119,10 +124,9 @@ jobs:
           retention-days: 1
 
   merge:
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     needs:
       - build
-    environment: ${{ inputs.environment }}
     steps:
       - name: Download digests
         uses: actions/download-artifact@v5
@@ -131,14 +135,15 @@ jobs:
           pattern: digests-*
           merge-multiple: true
 
-      - name: Login to Docker Hub
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Blacksmith Builder
-        uses: useblacksmith/setup-docker-builder@ab5c1da94f53f5cd75c1038092aa276dddfccbba  # v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Docker meta
         id: meta

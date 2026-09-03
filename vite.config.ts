@@ -120,8 +120,10 @@ export default ({ mode }: ConfigEnv) =>
           ],
         },
         manifest: {
-          name: "Outline",
-          short_name: "Outline",
+          // Baked in at build time, so it is set with the APP_NAME build arg
+          // rather than the runtime environment variable of the same name.
+          name: environment.APP_NAME || "Outline",
+          short_name: environment.APP_NAME || "Outline",
           theme_color: "#fff",
           background_color: "#fff",
           start_url: "/",

@@ -873,7 +873,7 @@ export class Environment {
    * The product name
    */
   @Public
-  public APP_NAME = "Outline";
+  public APP_NAME = this.toOptionalString(environment.APP_NAME) ?? "Outline";
 
   /**
    * Gravity constant for time decay in popularity scoring. Higher values cause

@@ -121,7 +121,9 @@ services:
   #   ssh -L 9101:127.0.0.1:9101 lvallejos@82.29.56.191  → http://localhost:9101
   # ───────────────────────────────────────────────────────────────────────────
   outline-minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # Silo (pgsty): fork mantenido de MinIO, mismo formato de datos. minio/minio está archivado
+    # desde 2026-04 y su última imagen no recibe parches.
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
     container_name: outline-minio
     restart: unless-stopped
     networks: [outline-data, outline-edge]
@@ -155,7 +157,7 @@ services:
   # El acceso es siempre por URL firmada; nunca anónimo.
   # ───────────────────────────────────────────────────────────────────────────
   outline-minio-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: pgsty/mc:RELEASE.2026-10-18T00-00-00Z@sha256:6ecdaec70bc5e8cf9d0e9a70c190f3beb1c83f11617ff4333f1fcd71ab1daf18
     container_name: outline-minio-init
     restart: "no"
     networks: [outline-data]

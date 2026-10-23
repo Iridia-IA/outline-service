@@ -95,7 +95,7 @@ services:
     volumes:
       - ./data/redis:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$OUTLINE_REDIS_PASSWORD\" ping | grep -q PONG"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$OUTLINE_REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]   # sin -a: deja la password en ps
       interval: 10s
       timeout: 5s
       retries: 5

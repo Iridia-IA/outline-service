@@ -87,7 +87,7 @@ services:
   # vez alguien agrega un `ports:` por error, no queda abierto).
   # ───────────────────────────────────────────────────────────────────────────
   outline-redis:
-    image: redis:7-alpine
+    image: redis:7.4.12-alpine@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f   # 2026-10-30: pin (antes 7-alpine flotante)
     container_name: outline-redis
     restart: unless-stopped
     networks: [outline-data]
@@ -123,7 +123,7 @@ services:
   outline-minio:
     # Silo (pgsty): fork mantenido de MinIO, mismo formato de datos. minio/minio está archivado
     # desde 2026-04 y su última imagen no recibe parches.
-    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
+    image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
     container_name: outline-minio
     restart: unless-stopped
     networks: [outline-data, outline-edge]
@@ -157,7 +157,7 @@ services:
   # El acceso es siempre por URL firmada; nunca anónimo.
   # ───────────────────────────────────────────────────────────────────────────
   outline-minio-init:
-    image: pgsty/mc:RELEASE.2026-10-18T00-00-00Z@sha256:6ecdaec70bc5e8cf9d0e9a70c190f3beb1c83f11617ff4333f1fcd71ab1daf18
+    image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8
     container_name: outline-minio-init
     restart: "no"
     networks: [outline-data]

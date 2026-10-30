@@ -1,12 +1,11 @@
 import type { Node as ProsemirrorNode } from "prosemirror-model";
 import type { Decoration, EditorView, NodeView } from "prosemirror-view";
 import type { FunctionComponent } from "react";
-import ReactDOM from "react-dom";
-import {
-  type ServerStyleSheet,
-  StyleSheetManager,
-  ThemeProvider,
-} from "styled-components";
+import { flushSync } from "react-dom";
+import type { Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
+import { type ServerStyleSheet, ThemeProvider } from "styled-components";
+import { StyleSheetProvider } from "@shared/components/StyleSheetProvider";
 import type { ComponentProps } from "@shared/editor/types";
 import light from "@shared/styles/theme";
 
@@ -26,9 +25,9 @@ type ComponentViewOptions = {
 /**
  * Server-side ProseMirror NodeView that renders a node's React `component` –
  * the same one used in the browser – into a headless jsdom document, so HTML
- * export matches the in-app rendering. Rendering is synchronous under React 17;
- * content-bearing nodes expose a `contentDOM` hole that ProseMirror fills,
- * while leaf nodes render entirely from React.
+ * export matches the in-app rendering. Rendering is forced synchronous with
+ * flushSync; content-bearing nodes expose a `contentDOM` hole that ProseMirror
+ * fills, while leaf nodes render entirely from React.
  */
 export class ComponentView implements NodeView {
   /** The DOM element the node is rendered into. */
@@ -39,6 +38,7 @@ export class ComponentView implements NodeView {
   private node: ProsemirrorNode;
   private decorations: readonly Decoration[];
   private className: string;
+  private root: Root;
 
   constructor(
     component: FunctionComponent<Omit<ComponentProps, "theme">>,
@@ -70,14 +70,19 @@ export class ComponentView implements NodeView {
     };
 
     const Component = component;
-    ReactDOM.render(
-      <StyleSheetManager sheet={sheet.instance}>
-        <ThemeProvider theme={light}>
-          <Component {...props} />
-        </ThemeProvider>
-      </StyleSheetManager>,
-      this.dom
-    );
+    this.root = createRoot(this.dom);
+    // flushSync guarantees the mount commits before the constructor returns;
+    // a plain root.render() is asynchronous and the export path reads the DOM
+    // immediately after.
+    flushSync(() => {
+      this.root.render(
+        <StyleSheetProvider sheet={sheet.instance}>
+          <ThemeProvider theme={light}>
+            <Component {...props} />
+          </ThemeProvider>
+        </StyleSheetProvider>
+      );
+    });
   }
 
   /**
@@ -96,7 +101,7 @@ export class ComponentView implements NodeView {
 
   /** Unmount the React tree, clearing any timers the component scheduled. */
   public destroy(): void {
-    ReactDOM.unmountComponentAtNode(this.dom);
+    this.root.unmount();
   }
 
   /**
@@ -120,7 +125,7 @@ export class ComponentView implements NodeView {
 
   /**
    * Ref callback marking the element ProseMirror-managed content is mounted
-   * within. Refs fire synchronously under React 17, so `contentDOM` is attached
+   * within. The render is wrapped in flushSync, so `contentDOM` is attached
    * before the constructor returns.
    */
   private handleContentRef = (element: HTMLElement | null) => {

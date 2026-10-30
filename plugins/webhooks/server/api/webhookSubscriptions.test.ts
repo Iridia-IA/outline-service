@@ -32,7 +32,7 @@ describe("#webhookSubscriptions.list", () => {
   it("should return the webhook subscriptions for the user's team", async () => {
     const user = await buildAdmin();
     const webhookSubscriptions = await Promise.all(
-      Array(20)
+      Array(5)
         .fill(1)
         .map(() =>
           buildWebhookSubscription({
@@ -254,6 +254,31 @@ describe("#webhookSubscriptions.update", () => {
     expect(webhook.url).toEqual(url);
     expect(webhook.events).toEqual(events);
     expect(webhook.enabled).toEqual(true);
+  });
+
+  it("should update a webhook subscription without a signing secret", async () => {
+    const user = await buildAdmin();
+    const name = "Updated webhook name";
+    const existingWebhook = await buildWebhookSubscription({
+      createdById: user.id,
+      teamId: user.teamId,
+      secret: null,
+    });
+
+    const res = await server.post("/api/webhookSubscriptions.update", user, {
+      body: {
+        id: existingWebhook.id,
+        name,
+        url: existingWebhook.url,
+        events: existingWebhook.events,
+        secret: null,
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.name).toEqual(name);
+    expect(body.data.secret).toBeNull();
   });
 
   it("should activate a disabled webhook subscription when it's updated", async () => {

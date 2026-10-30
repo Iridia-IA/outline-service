@@ -1,4 +1,3 @@
-/* oxlint-disable prefer-rest-params */
 /* global ga */
 import { escape } from "es-toolkit/compat";
 import * as React from "react";
@@ -11,7 +10,7 @@ type Props = {
 };
 
 // TODO: Refactor this component to allow injection from plugins
-const Analytics: React.FC = ({ children }: Props) => {
+const Analytics: React.FC<Props> = ({ children }: Props) => {
   // Google Analytics 3
   React.useEffect(() => {
     if (!env.GOOGLE_ANALYTICS_ID?.startsWith("UA-")) {

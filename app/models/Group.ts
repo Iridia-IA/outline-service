@@ -24,6 +24,11 @@ interface ExternalGroupInfo {
 class Group extends Model implements Searchable {
   static modelName = "Group";
 
+  constructor(fields: Record<string, unknown>, store: Model["store"]) {
+    super(fields, store);
+    this.initialize(fields);
+  }
+
   @Field
   @observable
   name: string;
@@ -32,8 +37,18 @@ class Group extends Model implements Searchable {
   @observable
   description: string;
 
+  /** An icon (or) emoji to use as the group icon. */
+  @Field
   @observable
-  externalId: string | undefined;
+  icon: string | null;
+
+  /** The color of the group icon. */
+  @Field
+  @observable
+  color: string | null;
+
+  @observable
+  externalId: string | undefined = undefined;
 
   @observable
   memberCount: number;
@@ -43,7 +58,15 @@ class Group extends Model implements Searchable {
   disableMentions: boolean;
 
   @observable
-  externalGroup: ExternalGroupInfo | undefined;
+  externalGroup: ExternalGroupInfo | undefined = undefined;
+
+  /**
+   * The initial letter of the group name.
+   */
+  @computed
+  get initial(): string {
+    return (this.name ?? "").charAt(0).toUpperCase();
+  }
 
   /**
    * Whether this group's membership is managed by an external authentication provider.

@@ -1,4 +1,3 @@
-// oxlint-disable-next-line import/no-unresolved
 import "vite/modulepreload-polyfill";
 // Keep ahead of the other imports so polyfills apply before they evaluate.
 import "~/utils/polyfills";
@@ -7,8 +6,8 @@ import { KBarProvider } from "kbar";
 import { Provider } from "mobx-react";
 import { configure as configureMobx } from "mobx";
 import { StrictMode } from "react";
-import { render } from "react-dom";
-import { HelmetProvider } from "react-helmet-async";
+import type { Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { Router } from "react-router-dom";
 import stores from "~/stores";
 import Analytics from "~/components/Analytics";
@@ -22,7 +21,6 @@ import Toasts from "~/components/Toasts";
 import env from "~/env";
 import { initI18n } from "~/utils/i18n";
 import Desktop from "./components/DesktopEventHandler";
-import LazyPolyfill from "./components/LazyPolyfills";
 import PageScroll from "./components/PageScroll";
 import Routes from "./routes";
 import Logger from "./utils/Logger";
@@ -41,15 +39,21 @@ initI18n(env.DEFAULT_LANGUAGE);
 // React-mounted listener, such as kbar's Enter handler.
 initSplitViewNavigation(history);
 
-const element = window.document.getElementById("root");
+// The dev server can evaluate this module twice (plain and HMR-timestamped
+// URL). Unlike ReactDOM.render, createRoot must not be called twice on the
+// same container, so the root is stored on the element and reused.
+interface RootElement extends HTMLElement {
+  __reactRoot?: Root;
+}
+
+const element: RootElement | null = window.document.getElementById("root");
 
 if (env.SENTRY_DSN) {
   initSentry(history);
 }
 
 configureMobx({
-  // TODO: Enable these options and fix any resulting warnings
-  // enforceActions: env.isDevelopment ? "always" : "never",
+  enforceActions: env.isDevelopment ? "observed" : "never",
   computedRequiresReaction: true,
   isolateGlobalState: true,
 });
@@ -64,40 +68,37 @@ const commandBarOptions = {
 if (element) {
   const App = () => (
     <StrictMode>
-      <HelmetProvider>
-        <Provider rootStore={stores}>
-          <Analytics>
-            <Router history={history}>
-              <Theme>
-                <ActionContextProvider>
-                  <ErrorBoundary showTitle>
-                    <KBarProvider actions={[]} options={commandBarOptions}>
-                      <LazyPolyfill>
-                        <LazyMotion features={domMax}>
-                          <PageScroll>
-                            <PageTheme />
-                            <ScrollToTop>
-                              <Routes />
-                            </ScrollToTop>
-                            <Toasts />
-                            <Dialogs />
-                            <Presentation />
-                            <Desktop />
-                          </PageScroll>
-                        </LazyMotion>
-                      </LazyPolyfill>
-                    </KBarProvider>
-                  </ErrorBoundary>
-                </ActionContextProvider>
-              </Theme>
-            </Router>
-          </Analytics>
-        </Provider>
-      </HelmetProvider>
+      <Provider rootStore={stores}>
+        <Analytics>
+          <Router history={history}>
+            <Theme>
+              <ActionContextProvider>
+                <ErrorBoundary showTitle>
+                  <KBarProvider actions={[]} options={commandBarOptions}>
+                    <LazyMotion features={domMax}>
+                      <PageScroll>
+                        <PageTheme />
+                        <ScrollToTop>
+                          <Routes />
+                        </ScrollToTop>
+                        <Toasts />
+                        <Dialogs />
+                        <Presentation />
+                        <Desktop />
+                      </PageScroll>
+                    </LazyMotion>
+                  </KBarProvider>
+                </ErrorBoundary>
+              </ActionContextProvider>
+            </Theme>
+          </Router>
+        </Analytics>
+      </Provider>
     </StrictMode>
   );
 
-  render(<App />, element);
+  element.__reactRoot ??= createRoot(element);
+  element.__reactRoot.render(<App />);
 }
 
 window.addEventListener("load", async () => {

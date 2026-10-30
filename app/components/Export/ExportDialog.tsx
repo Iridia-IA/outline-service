@@ -1,5 +1,5 @@
 import { observer } from "mobx-react";
-import { ArchiveIcon, CodeIcon } from "outline-icons";
+import { ArchiveIcon, CodeIcon, GlobeIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
@@ -73,6 +73,12 @@ export const ExportDialog = observer(({ collection, onSubmit }: Props) => {
       icon: <MarkdownIcon />,
     },
     {
+      title: "Open Knowledge Format",
+      extension: ".okf.zip",
+      value: FileOperationFormat.OKFZip,
+      icon: <GlobeIcon />,
+    },
+    {
       title: "HTML",
       extension: ".html.zip",
       value: FileOperationFormat.HTMLZip,
@@ -98,7 +104,7 @@ export const ExportDialog = observer(({ collection, onSubmit }: Props) => {
         <Text as="p">
           {t("Exporting the collection may take some time.")}{" "}
           {user.subscribedToEventType(NotificationEventType.ExportCompleted) &&
-            t("You will receive an email when it's complete.")}
+            t("You will receive an email when it’s complete.")}
         </Text>
       )}
       <FileFormatSelector

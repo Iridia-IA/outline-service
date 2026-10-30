@@ -2,12 +2,14 @@ import fractionalIndex from "fractional-index";
 import type { Location } from "history";
 import { observer } from "mobx-react";
 import * as React from "react";
+import type { match } from "react-router";
 import { IconType, NotificationEventType } from "@shared/types";
 import { determineIconType } from "@shared/utils/icon";
 import type GroupMembership from "~/models/GroupMembership";
 import UserMembership from "~/models/UserMembership";
 import { useActiveSidebarContext } from "~/hooks/useActiveSidebarContext";
 import useBoolean from "~/hooks/useBoolean";
+import { useComputed } from "~/hooks/useComputed";
 import useStores from "~/hooks/useStores";
 import DocumentMenu from "~/menus/DocumentMenu";
 import * as Scenes from "~/routes/scenes";
@@ -20,7 +22,7 @@ import SidebarExpansionContext, {
   useSidebarExpansionState,
 } from "./SidebarExpansionContext";
 import { useSidebarLabelAndIcon } from "../hooks/useSidebarLabelAndIcon";
-import DocumentLink from "./DocumentLink";
+import { DocumentTree } from "./DocumentTree";
 import DocumentRow from "./DocumentRow";
 import DropCursor from "./DropCursor";
 import Folder from "./Folder";
@@ -29,6 +31,7 @@ import SidebarDisclosureContext, {
   useSidebarDisclosureState,
 } from "./SidebarDisclosureContext";
 import { useSidebarContext, type SidebarContextType } from "./SidebarContext";
+import { useSidebarNavigation } from "./SidebarNavigation";
 
 type Props = {
   membership: UserMembership | GroupMembership;
@@ -40,19 +43,23 @@ function SharedWithMeLink({ membership, depth = 0 }: Props) {
   const { fetchChildDocuments } = documents;
   const [menuOpen, handleMenuOpen, handleMenuClose] = useBoolean();
   const { documentId } = membership;
-  const isActiveDocument = documentId === ui.activeDocumentId;
+  const isActiveDocument = useComputed(
+    () => documentId === ui.activeDocumentId,
+    [documentId, ui]
+  );
   const activeSidebarContext = useActiveSidebarContext();
   const sidebarContext = useSidebarContext();
   const document = documentId ? documents.get(documentId) : undefined;
 
   const membershipDocuments = membership.documents;
-  const expansion = useSidebarExpansionState(
-    membershipDocuments,
-    ui.activeDocumentId
+  const expansion = useSidebarExpansionState(membershipDocuments);
+  const isActiveDocumentInPath = useComputed(
+    () =>
+      ui.activeDocumentId
+        ? membership.pathToDocument(ui.activeDocumentId).length > 0
+        : false,
+    [membership, ui]
   );
-  const isActiveDocumentInPath = ui.activeDocumentId
-    ? membership.pathToDocument(ui.activeDocumentId).length > 0
-    : false;
 
   const [expanded, setExpanded, setCollapsed] = useBoolean(
     isActiveDocumentInPath && activeSidebarContext === sidebarContext
@@ -122,8 +129,8 @@ function SharedWithMeLink({ membership, depth = 0 }: Props) {
   );
   const [{ isOverReparent }, dropToReparent] = useDropToReparentDocument(
     reparentableNode,
-    setExpanded,
-    parentRef
+    undefined,
+    setExpanded
   );
 
   const { icon } = useSidebarLabelAndIcon(membership);
@@ -140,12 +147,33 @@ function SharedWithMeLink({ membership, depth = 0 }: Props) {
     useDropToReorderUserMembership(getIndex);
 
   const isActive = React.useCallback(
-    (match, location: Location<{ sidebarContext?: SidebarContextType }>) =>
-      !!match && location.state?.sidebarContext === sidebarContext,
+    (
+      match: match | null,
+      location: Location<{ sidebarContext?: SidebarContextType }>
+    ) => !!match && location.state?.sidebarContext === sidebarContext,
     [sidebarContext]
   );
 
   const displayChildDocuments = expanded && !isDragging;
+
+  const getNavigationItems = React.useCallback(
+    () =>
+      document
+        ? [
+            {
+              id: document.id,
+              url: document.path,
+              title: document.title,
+              sidebarContext,
+              collapsedChildren: displayChildDocuments
+                ? undefined
+                : membershipDocuments,
+            },
+          ]
+        : [],
+    [document, sidebarContext, displayChildDocuments, membershipDocuments]
+  );
+  useSidebarNavigation(parentRef, getNavigationItems);
 
   if (!document) {
     return null;
@@ -155,7 +183,7 @@ function SharedWithMeLink({ membership, depth = 0 }: Props) {
   const label =
     determineIconType(docIcon) === IconType.Emoji
       ? document.title.replace(docIcon!, "")
-      : document.titleWithDefault;
+      : document.displayTitle;
   const collection = document.collectionId
     ? collections.get(document.collectionId)
     : undefined;
@@ -198,6 +226,14 @@ function SharedWithMeLink({ membership, depth = 0 }: Props) {
       parentRef={parentRef}
       dropToReparentRef={dropToReparent}
       isActiveDropTarget={isOverReparent}
+      cursorAfter={
+        reorderProps.isDragging ? (
+          <DropCursor
+            isActiveDrop={reorderProps.isOverCursor}
+            innerRef={dropToReorderRef}
+          />
+        ) : undefined
+      }
       menu={menu}
       menuOpen={menuOpen}
       isActiveOverride={isActive}
@@ -205,28 +241,19 @@ function SharedWithMeLink({ membership, depth = 0 }: Props) {
       <SidebarDisclosureContext.Provider value={disclosureEvent}>
         <SidebarExpansionContext.Provider value={expansion}>
           <Folder expanded={displayChildDocuments}>
-            {childDocuments.map((childNode, index) => (
-              <DocumentLink
-                key={childNode.id}
-                node={childNode}
-                collection={collection}
-                membership={membership}
-                activeDocument={documents.active}
-                isDraft={childNode.isDraft}
-                depth={depth + 1}
-                index={index}
-                parentId={document.id}
-              />
-            ))}
+            <DocumentTree
+              nodes={childDocuments}
+              depth={depth + 1}
+              parentId={document.id}
+              collection={collection}
+              membership={membership}
+              // Loads the document and its policies on hover, without which
+              // rows that were never opened cannot be dragged or dropped on.
+              prefetchDocument={documents.prefetchDocument}
+            />
           </Folder>
         </SidebarExpansionContext.Provider>
       </SidebarDisclosureContext.Provider>
-      {reorderProps.isDragging && (
-        <DropCursor
-          isActiveDrop={reorderProps.isOverCursor}
-          innerRef={dropToReorderRef}
-        />
-      )}
     </DocumentRow>
   );
 }

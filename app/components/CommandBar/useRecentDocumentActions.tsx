@@ -43,9 +43,10 @@ const useRecentDocumentActions = (count = recentDocumentCount) => {
         count
       ).map((item) =>
         createInternalLinkAction({
-          name: item.titleWithDefault,
+          name: item.displayTitle,
           analyticsName: "Recently viewed document",
           section: RecentSection,
+          visible: ({ isMCP }) => !isMCP,
           description: documentBreadcrumbText(item, t),
           icon: item.icon ? (
             <Icon

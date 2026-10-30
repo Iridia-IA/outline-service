@@ -1,11 +1,13 @@
 import type { ColumnSort } from "@tanstack/react-table";
 import { observer } from "mobx-react";
 import { PlusIcon, UserIcon } from "outline-icons";
+import type * as React from "react";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import styled from "styled-components";
+import { breakpoint } from "@shared/styles/breakpoint";
 import type { Filter } from "@shared/helpers/FilterHelper";
 import type UsersStore from "~/stores/UsersStore";
 import { queriedUsers } from "~/stores/UsersStore";
@@ -93,19 +95,22 @@ function Users() {
   );
 
   const handleStatusFilter = useCallback(
-    (status) => updateParams("filter", status),
+    (status: string) => updateParams("filter", status),
     [updateParams]
   );
 
   const handleRoleFilter = useCallback(
-    (role) => updateParams("role", role),
+    (role: string) => updateParams("role", role),
     [updateParams]
   );
 
-  const handleSearch = useCallback((event) => {
-    const { value } = event.target;
-    setQuery(value);
-  }, []);
+  const handleSearch = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const { value } = event.target;
+      setQuery(value);
+    },
+    []
+  );
 
   useEffect(() => {
     if (error) {
@@ -151,7 +156,7 @@ function Users() {
         </Trans>
       </Text>
       <StickyFilters justify="space-between">
-        <HStack>
+        <FilterGroup>
           <InputSearch
             short
             value={query}
@@ -166,7 +171,7 @@ function Users() {
             activeKey={role ?? ""}
             onSelect={handleRoleFilter}
           />
-        </HStack>
+        </FilterGroup>
         <ExportCSV reqParams={reqParams} />
       </StickyFilters>
       <ConditionalFade animate={!data}>
@@ -263,6 +268,12 @@ function getFilteredUsers({
 
   return filteredUsers;
 }
+
+const FilterGroup = styled(HStack)`
+  ${breakpoint("mobile", "tablet")`
+    display: contents;
+  `};
+`;
 
 const LargeUserStatusFilter = styled(UserStatusFilter)`
   height: 32px;

@@ -4,6 +4,7 @@ import { transparentize } from "polished";
 import * as React from "react";
 import styled from "styled-components";
 import { s } from "@shared/styles";
+import { useStuckAttribute } from "~/hooks/useStuckAttribute";
 import useWindowSize from "~/hooks/useWindowSize";
 
 const Nav = styled.nav<{ $shadowVisible?: boolean }>`
@@ -44,9 +45,12 @@ const Nav = styled.nav<{ $shadowVisible?: boolean }>`
 
 // When sticky we need extra background coverage around the sides otherwise
 // items that scroll past can "stick out" the sides of the heading
+/** Offset from the top of the viewport at which the tab bar sticks. */
+const StickyTop = 54;
+
 const Sticky = styled.div`
   position: sticky;
-  top: 54px;
+  top: ${StickyTop}px;
   margin: 0 -8px;
   padding: 0 8px;
   background: ${s("background")};
@@ -69,13 +73,14 @@ type Props = {
  * multiple tab bars on screen at once don't share the "underline" layoutId and
  * animate between each other. Only needed when composing `Tab` outside of `Tabs`.
  */
-export const TabsGroup: React.FC = ({ children }: Props) => {
+export const TabsGroup: React.FC<Props> = ({ children }: Props) => {
   const layoutGroupId = React.useMemo(() => uniqueId("tabs-"), []);
   return <LayoutGroup id={layoutGroupId}>{children}</LayoutGroup>;
 };
 
-export const Tabs: React.FC = ({ children }: Props) => {
+export const Tabs: React.FC<Props> = ({ children }: Props) => {
   const ref = React.useRef<HTMLElement>(null);
+  const stickyRef = React.useRef<HTMLDivElement>(null);
   const [shadowVisible, setShadow] = React.useState(false);
   const { width } = useWindowSize();
 
@@ -97,9 +102,11 @@ export const Tabs: React.FC = ({ children }: Props) => {
     updateShadows();
   }, [width, updateShadows]);
 
+  useStuckAttribute(stickyRef, StickyTop);
+
   return (
     <TabsGroup>
-      <Sticky>
+      <Sticky ref={stickyRef}>
         <Nav ref={ref} onScroll={updateShadows} $shadowVisible={shadowVisible}>
           {children}
         </Nav>

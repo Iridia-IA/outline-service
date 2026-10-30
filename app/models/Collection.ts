@@ -1,5 +1,13 @@
+import i18n from "i18next";
 import invariant from "invariant";
-import { action, comparer, computed, observable, runInAction } from "mobx";
+import {
+  action,
+  comparer,
+  computed,
+  observable,
+  override,
+  runInAction,
+} from "mobx";
 import {
   type CollectionPermission,
   type FileOperationFormat,
@@ -19,12 +27,21 @@ import { AfterChange } from "./decorators/Lifecycle";
 export default class Collection extends ParanoidModel {
   static modelName = "Collection";
 
+  constructor(fields: Record<string, unknown>, store: CollectionsStore) {
+    super(fields, store);
+    this.initialize(fields);
+  }
+
   store: CollectionsStore;
 
   /** The name of the collection. */
   @Field
   @observable
   name: string;
+
+  /** The reason this collection is archived. */
+  @observable
+  deprecatedReason: string | null = null;
 
   /** Collection description in Prosemirror format. */
   @Field
@@ -39,13 +56,15 @@ export default class Collection extends ParanoidModel {
   /** The color to use for the collection icon and other highlights. */
   @Field
   @observable
-  color?: string | null;
-
+  color?: string | null = undefined;
   /** The default permission for workspace users. */
   @Field
   @observable
-  permission?: CollectionPermission;
+  permission?: CollectionPermission = undefined;
 
+  /** The user that owns this collection, if it is a personal collection. */
+  @observable
+  ownerId: string | null;
   /**
    * Whether public sharing is enabled for the collection. Note this can also be disabled at the
    * workspace level.
@@ -77,12 +96,10 @@ export default class Collection extends ParanoidModel {
    */
   @Field
   @observable
-  commenting?: boolean | null;
-
+  commenting?: boolean | null = undefined;
   /** The child documents of the collection. */
   @observable
-  documents?: NavigationNode[];
-
+  documents?: NavigationNode[] = undefined;
   /** @deprecated Use path instead. */
   @observable
   url: string;
@@ -101,11 +118,21 @@ export default class Collection extends ParanoidModel {
    * User who archived the collection.
    */
   @observable
-  archivedBy?: User;
-
+  archivedBy?: User = undefined;
   @computed
   get searchContent(): string {
-    return this.name;
+    return this.displayName;
+  }
+
+  /**
+   * The name to show for the collection. A personal collection is always shown
+   * with a translated name, whatever name is stored.
+   *
+   * @returns the name to display.
+   */
+  @computed
+  get displayName(): string {
+    return this.isPersonal ? i18n.t("Personal") : this.name;
   }
 
   /** Returns whether the collection is empty, or undefined if not loaded. */
@@ -130,6 +157,15 @@ export default class Collection extends ParanoidModel {
    */
   get isPrivate(): boolean {
     return this.permission === null;
+  }
+
+  /**
+   * Whether this collection is the personal collection of a user.
+   *
+   * @returns boolean
+   */
+  get isPersonal(): boolean {
+    return !!this.ownerId;
   }
 
   @computed
@@ -188,7 +224,7 @@ export default class Collection extends ParanoidModel {
   /** The initial letter of the collection name as a string. */
   @computed
   get initial() {
-    return (this.name?.charAt(0) ?? "?").toUpperCase();
+    return (this.displayName?.charAt(0) ?? "?").toUpperCase();
   }
 
   @computed
@@ -214,7 +250,7 @@ export default class Collection extends ParanoidModel {
     return !!this.archivedAt;
   }
 
-  @computed
+  @override
   get isDeleted() {
     return !!this.deletedAt;
   }
@@ -244,7 +280,7 @@ export default class Collection extends ParanoidModel {
       });
       invariant(res?.data, "Data should be available");
 
-      runInAction("Collection#fetchDocuments", () => {
+      runInAction(() => {
         this.documents = res.data;
       });
     } finally {
@@ -308,14 +344,15 @@ export default class Collection extends ParanoidModel {
 
   /**
    * Adds the document identified by the given id to the collection in
-   * memory. Does not add the document to the database or store.
+   * memory, if it is not already present. Does not add the document to the
+   * database or store.
    *
    * @param document The document to add.
    * @param parentDocumentId The id of the document to add the new document to.
    */
   @action
   addDocument(document: Document, parentDocumentId?: string) {
-    if (!this.documents) {
+    if (!this.documents || this.childrenByDocumentId.has(document.id)) {
       return;
     }
 

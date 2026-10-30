@@ -50,13 +50,19 @@ function ApiKeyNew({ onSubmit }: Props) {
     []
   );
 
-  const handleNameChange = React.useCallback((event) => {
-    setName(event.target.value);
-  }, []);
+  const handleNameChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      setName(event.target.value);
+    },
+    []
+  );
 
-  const handleScopeChange = React.useCallback((event) => {
-    setScope(event.target.value);
-  }, []);
+  const handleScopeChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      setScope(event.target.value);
+    },
+    []
+  );
 
   const handleExpiryTypeChange = React.useCallback((value: string) => {
     const expiry = value as ExpiryType;
@@ -77,7 +83,7 @@ function ApiKeyNew({ onSubmit }: Props) {
         await apiKeys.create({
           name,
           expiresAt: expiresAt?.toISOString(),
-          scope: scope ? scope.split(" ") : undefined,
+          scope: scope ? scope.split(/[\s,]+/).filter(Boolean) : undefined,
         });
         toast.success(
           t(
@@ -119,9 +125,8 @@ function ApiKeyNew({ onSubmit }: Props) {
         />
         <Text type="secondary" size="small" as="p">
           {t(
-            "Space-separated scopes restrict the access of this API key to specific parts of the API. Leave blank for full access"
+            "Space-separated scopes restrict the access of this API key to specific parts of the API. Leave blank for full access."
           )}
-          .
         </Text>
         <Flex align="center" gap={8}>
           <StyledExpirySelect

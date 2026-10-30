@@ -1,6 +1,6 @@
 import { clamp } from "es-toolkit";
 import { t } from "i18next";
-import { action, computed, observable } from "mobx";
+import { action, computed, makeObservable, observable } from "mobx";
 import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import { light as defaultTheme } from "@shared/styles/theme";
@@ -9,7 +9,6 @@ import Storage from "@shared/utils/Storage";
 import Document from "~/models/Document";
 import type Model from "~/models/base/Model";
 import Collection from "~/models/Collection";
-import type { ConnectionStatus } from "~/scenes/Document/components/MultiplayerEditor";
 import type { SplitViewPane } from "~/utils/splitView";
 import { isTruthyQueryValue } from "~/utils/urls";
 import { startViewTransition } from "~/utils/viewTransition";
@@ -49,40 +48,40 @@ type PersistedData = Pick<
 class UiStore {
   // has the user seen the prompt to change the UI language and actioned it
   @observable
-  languagePromptDismissed: boolean | undefined;
+  languagePromptDismissed: boolean | undefined = undefined;
 
   // theme represents the users UI preference (defaults to system)
   @observable
-  theme: Theme;
+  theme: Theme = Theme.System;
 
   // themeOverride is set when a theme query parameter is detected, persists for the session
   @observable
-  themeOverride: Theme | undefined;
+  themeOverride: Theme | undefined = undefined;
 
   // systemTheme represents the system UI theme (Settings -> General in macOS)
   @observable
-  systemTheme: SystemTheme;
+  systemTheme: SystemTheme = SystemTheme.Light;
 
   @observable
   activeModels = observable.map<string, Model>();
 
   @observable
-  observingUserId: string | undefined;
+  observingUserId: string | undefined = undefined;
 
   @observable
   progressBarVisible = false;
 
   @observable
-  tocVisible: boolean | undefined;
+  tocVisible: boolean | undefined = undefined;
 
   @observable
   mobileSidebarVisible = false;
 
   @observable
-  sidebarWidth: number;
+  sidebarWidth: number = defaultTheme.sidebarWidth;
 
   @observable
-  sidebarRightWidth: number;
+  sidebarRightWidth: number = defaultTheme.sidebarRightWidth;
 
   @observable
   sidebarCollapsed = false;
@@ -111,12 +110,6 @@ class UiStore {
   sidebarIsResizing = false;
 
   @observable
-  multiplayerStatus: ConnectionStatus;
-
-  @observable
-  multiplayerErrorCode?: number;
-
-  @observable
   debugSafeArea = false;
 
   /** Data for the currently active presentation, if any. */
@@ -137,7 +130,7 @@ class UiStore {
   setPresentingDocument = (document: Document | null): void => {
     this.presentationData = document
       ? {
-          title: document.titleWithDefault,
+          title: document.displayTitle,
           icon: document.icon,
           color: document.color,
           data: document.data,
@@ -212,13 +205,15 @@ class UiStore {
           return;
         }
 
-        // Note: we do not sync all properties here, sidebar widths cause fighting between windows
+        // Note: we do not sync all properties here, sidebar widths and TOC
+        // visibility cause fighting between windows
         this.theme = newData.theme;
         this.languagePromptDismissed = newData.languagePromptDismissed;
         this.sidebarCollapsed = !!newData.sidebarCollapsed;
-        this.tocVisible = newData.tocVisible;
       }
     });
+
+    makeObservable(this);
   }
 
   /**
@@ -359,15 +354,6 @@ class UiStore {
   };
 
   @action
-  setMultiplayerStatus = (
-    status: ConnectionStatus,
-    errorCode?: number
-  ): void => {
-    this.multiplayerStatus = status;
-    this.multiplayerErrorCode = errorCode;
-  };
-
-  @action
   setSidebarResizing = (sidebarIsResizing: boolean): void => {
     this.sidebarIsResizing = sidebarIsResizing;
   };
@@ -409,6 +395,7 @@ class UiStore {
       this.secondaryRightSidebar = panel;
     } else {
       this.rightSidebar = panel;
+      this.persist();
     }
   };
 

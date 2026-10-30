@@ -1,3 +1,4 @@
+// @vitest-isolate true
 import { faker } from "@faker-js/faker";
 import { Node } from "prosemirror-model";
 import type { DeepPartial } from "utility-types";
@@ -142,7 +143,7 @@ describe("ProsemirrorHelper", () => {
         mentionedParagraph,
       ]);
 
-      const newDoc = await ProsemirrorHelper.processMentions(doc);
+      const newDoc = await ProsemirrorHelper.processMentions(doc, user.teamId);
       expect(newDoc.content?.[1]?.content?.[1].attrs?.label).toEqual("Unknown");
     });
 
@@ -157,7 +158,7 @@ describe("ProsemirrorHelper", () => {
       };
 
       await user.update({
-        name: faker.name.firstName(),
+        name: faker.person.firstName(),
       });
 
       const mentionedParagraph: DeepPartial<ProsemirrorData> = {
@@ -191,13 +192,13 @@ describe("ProsemirrorHelper", () => {
         mentionedParagraph,
       ]);
 
-      const newDoc = await ProsemirrorHelper.processMentions(doc);
+      const newDoc = await ProsemirrorHelper.processMentions(doc, user.teamId);
       expect(newDoc.content?.[1]?.content?.[1].attrs?.label).toEqual(user.name);
     });
 
     it("should handle multiple renamed users", async () => {
       const firstUser = await buildUser();
-      const secondUser = await buildUser();
+      const secondUser = await buildUser({ teamId: firstUser.teamId });
 
       const firstMentionAttrs: MentionAttrs = {
         id: "9a17c1c8-d178-4350-9001-203a73070fcb",
@@ -215,8 +216,8 @@ describe("ProsemirrorHelper", () => {
         modelId: secondUser.id,
       };
 
-      const firstNewName = faker.name.firstName();
-      const secondNewName = faker.name.firstName();
+      const firstNewName = faker.person.firstName();
+      const secondNewName = faker.person.firstName();
 
       await firstUser.update({
         name: firstNewName,
@@ -265,13 +266,42 @@ describe("ProsemirrorHelper", () => {
         mentionedParagraph,
       ]);
 
-      const newDoc = await ProsemirrorHelper.processMentions(doc);
+      const newDoc = await ProsemirrorHelper.processMentions(
+        doc,
+        firstUser.teamId
+      );
       expect(newDoc.content?.[1]?.content?.[1].attrs?.label).toEqual(
         firstNewName
       );
       expect(newDoc.content?.[1]?.content?.[3].attrs?.label).toEqual(
         secondNewName
       );
+    });
+
+    it("should not resolve users from another team", async () => {
+      const user = await buildUser();
+      const otherTeamUser = await buildUser();
+
+      const doc = buildProseMirrorDoc([
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "mention",
+              attrs: {
+                id: "9a17c1c8-d178-4350-9001-203a73070fcb",
+                type: MentionType.User,
+                label: "other.user",
+                actorId: user.id,
+                modelId: otherTeamUser.id,
+              },
+            },
+          ],
+        },
+      ]);
+
+      const newDoc = await ProsemirrorHelper.processMentions(doc, user.teamId);
+      expect(newDoc.content?.[0]?.content?.[0].attrs?.label).toEqual("Unknown");
     });
   });
 

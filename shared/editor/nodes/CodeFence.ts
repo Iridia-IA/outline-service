@@ -65,6 +65,14 @@ const COLLAPSE_HEIGHT_RATIO = 0.5;
 const CODE_LINE_HEIGHT = 20;
 
 /**
+ * Fraction of the document text above which a code block is not
+ * auto-collapsed, as collapsing it would hide most of the document.
+ */
+const AUTO_COLLAPSE_MAX_DOC_RATIO = 0.5;
+
+const collapseKey = new PluginKey<CollapseState>("collapse-code-block");
+
+/**
  * Reduce a language attribute or fence info string to a single safe token, so
  * it cannot break the fence line when written back to markdown.
  *
@@ -85,6 +93,34 @@ interface CollapseState {
   collapsedBlocks: Set<number>;
   /** Node decorations that add the `collapsed` CSS class. */
   decorations: DecorationSet;
+}
+
+/**
+ * Expand the collapsed code block that contains a document position.
+ *
+ * @param pos - the document position inside the code block.
+ * @returns a command that expands the code block when it is collapsed.
+ */
+export function expandCodeBlockAt(pos: number): Command {
+  return (state, dispatch) => {
+    const $pos = state.doc.resolve(pos);
+    const codeBlock = findParentNodeClosestToPos($pos, isCode);
+    if (!codeBlock) {
+      return false;
+    }
+
+    const collapseState = collapseKey.getState(state);
+    if (!collapseState?.collapsedBlocks.has(codeBlock.pos)) {
+      return false;
+    }
+
+    dispatch?.(
+      state.tr
+        .setMeta(collapseKey, { expand: codeBlock.pos })
+        .setMeta("addToHistory", false)
+    );
+    return true;
+  };
 }
 
 /**
@@ -113,6 +149,32 @@ function findTallBlocks(doc: ProsemirrorNode): Set<number> {
 }
 
 /**
+ * Find the tall code blocks that should start collapsed. A block that makes
+ * up the majority of the document text is left expanded.
+ *
+ * @param doc - the document to scan.
+ * @param tallBlocks - positions of tall code blocks in the document.
+ * @returns set of positions of code blocks to auto-collapse.
+ */
+function findAutoCollapsedBlocks(
+  doc: ProsemirrorNode,
+  tallBlocks: Set<number>
+): Set<number> {
+  const docLength = doc.textContent.length;
+  const collapsed = new Set<number>();
+  for (const pos of tallBlocks) {
+    const node = doc.nodeAt(pos);
+    if (!node || !isCode(node)) {
+      continue;
+    }
+    if (node.textContent.length <= docLength * AUTO_COLLAPSE_MAX_DOC_RATIO) {
+      collapsed.add(pos);
+    }
+  }
+  return collapsed;
+}
+
+/**
  * Build a CollapseState with node decorations for the collapsed class and
  * widget decorations for toggle buttons on all tall blocks.
  */
@@ -133,17 +195,11 @@ function buildCollapseState(
     const isCollapsed = collapsedBlocks.has(pos);
 
     if (isCollapsed) {
-      const totalLines = (node.textContent.match(/\n/g)?.length ?? 0) + 1;
-      const gutterWidth = String(totalLines).length;
-      const lineNumberText = Array.from({ length: totalLines }, (_, i) =>
-        String(i + 1).padStart(gutterWidth, " ")
-      ).join("\n");
-
       decorations.push(
         Decoration.node(
           pos,
           pos + node.nodeSize,
-          { class: "collapsed", "data-line-numbers": lineNumberText },
+          { class: "collapsed" },
           { collapsed: true }
         )
       );
@@ -181,11 +237,6 @@ type CodeFenceOptions = {
 };
 
 export default class CodeFence extends Node<CodeFenceOptions> {
-  /** Plugin key for the collapse state, shared with the command. */
-  private static readonly collapseKey = new PluginKey<CollapseState>(
-    "collapse-code-block"
-  );
-
   get showLineNumbers(): boolean {
     return this.options.userPreferences?.codeBlockLineNumbers ?? true;
   }
@@ -241,11 +292,8 @@ export default class CodeFence extends Node<CodeFenceOptions> {
       toDOM: (node) => {
         const classes = [
           EditorStyleHelper.codeBlock,
-          node.attrs.wrap
-            ? "with-line-wrap"
-            : this.showLineNumbers
-              ? "with-line-numbers"
-              : "",
+          node.attrs.wrap ? "with-line-wrap" : "",
+          this.showLineNumbers ? "with-line-numbers" : "",
         ]
           .filter(Boolean)
           .join(" ");
@@ -273,29 +321,7 @@ export default class CodeFence extends Node<CodeFenceOptions> {
           ...attrs,
         });
       },
-      expandCodeBlockAt:
-        (pos: number): Command =>
-        (state, dispatch) => {
-          const $pos = state.doc.resolve(pos);
-          const codeBlock = findParentNodeClosestToPos($pos, isCode);
-          if (!codeBlock) {
-            return false;
-          }
-
-          const collapseState = CodeFence.collapseKey.getState(state);
-          if (!collapseState?.collapsedBlocks.has(codeBlock.pos)) {
-            return false;
-          }
-
-          if (dispatch) {
-            dispatch(
-              state.tr
-                .setMeta(CodeFence.collapseKey, { expand: codeBlock.pos })
-                .setMeta("addToHistory", false)
-            );
-          }
-          return true;
-        },
+      expandCodeBlockAt: (pos: number) => expandCodeBlockAt(pos),
       toggleCodeBlockCollapse: (): Command => (state, dispatch) => {
         const codeBlock = findParentNode(isCode)(state.selection);
         if (!codeBlock) {
@@ -305,7 +331,7 @@ export default class CodeFence extends Node<CodeFenceOptions> {
         if (dispatch) {
           dispatch(
             state.tr
-              .setMeta(CodeFence.collapseKey, {
+              .setMeta(collapseKey, {
                 toggle: codeBlock.pos,
               })
               .setMeta("addToHistory", false)
@@ -429,7 +455,6 @@ export default class CodeFence extends Node<CodeFenceOptions> {
 
   /** Plugins for collapsible code block behavior. */
   private collapsePlugins(): Plugin[] {
-    const collapseKey = CodeFence.collapseKey;
     const build = (
       doc: ProsemirrorNode,
       tall: Set<number>,
@@ -443,7 +468,11 @@ export default class CodeFence extends Node<CodeFenceOptions> {
         state: {
           init: (_config, state) => {
             const tallBlocks = findTallBlocks(state.doc);
-            return build(state.doc, tallBlocks, new Set(tallBlocks));
+            return build(
+              state.doc,
+              tallBlocks,
+              findAutoCollapsedBlocks(state.doc, tallBlocks)
+            );
           },
           apply: (tr, prev, oldState, newState) => {
             const meta = tr.getMeta(collapseKey);
@@ -477,6 +506,9 @@ export default class CodeFence extends Node<CodeFenceOptions> {
               const tallBlocks = findTallBlocks(newState.doc);
               const collapsedBlocks = new Set<number>();
               const isRemote = isRemoteTransaction(tr, newState);
+              const autoCollapsedBlocks = isRemote
+                ? findAutoCollapsedBlocks(newState.doc, tallBlocks)
+                : new Set<number>();
               const previousBlockDecorations: Decoration[] = [];
               for (const pos of prev.tallBlocks) {
                 const node = oldState.doc.nodeAt(pos);
@@ -519,9 +551,11 @@ export default class CodeFence extends Node<CodeFenceOptions> {
               }
 
               for (const pos of tallBlocks) {
-                if (isRemote && !mappedTallBlocks.has(pos)) {
-                  // Newly tall blocks start collapsed on load
-                  collapsedBlocks.add(pos);
+                if (!mappedTallBlocks.has(pos)) {
+                  // Newly tall blocks start collapsed only on load/remote sync
+                  if (autoCollapsedBlocks.has(pos)) {
+                    collapsedBlocks.add(pos);
+                  }
                 } else if (mappedCollapsedBlocks.has(pos)) {
                   // Preserve previous collapsed state
                   collapsedBlocks.add(pos);
@@ -667,12 +701,7 @@ export default class CodeFence extends Node<CodeFenceOptions> {
         name: this.name,
         lineNumbers: this.showLineNumbers,
       }),
-      this.name === "code_fence"
-        ? Mermaid({
-            isDark: this.editor.props.theme.isDark,
-            editor: this.editor,
-          })
-        : undefined,
+      this.name === "code_fence" ? Mermaid({ editor: this.editor }) : undefined,
       new Plugin({
         key: new PluginKey("code-fence-split"),
         props: {

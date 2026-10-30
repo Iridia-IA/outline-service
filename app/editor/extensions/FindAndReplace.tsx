@@ -1,5 +1,5 @@
 import { escapeRegExp } from "es-toolkit/compat";
-import { observable } from "mobx";
+import { action, makeObservable, observable } from "mobx";
 import type { Node } from "prosemirror-model";
 import type { Command } from "prosemirror-state";
 import { Plugin, PluginKey } from "prosemirror-state";
@@ -7,9 +7,9 @@ import { Decoration, DecorationSet } from "prosemirror-view";
 import scrollIntoView from "scroll-into-view-if-needed";
 import type { WidgetProps } from "@shared/editor/lib/Extension";
 import Extension from "@shared/editor/lib/Extension";
-import { Action, toggleFoldPluginKey } from "@shared/editor/nodes/ToggleBlock";
-import { isToggleBlock } from "@shared/editor/queries/toggleBlock";
-import { ancestors } from "@shared/editor/utils";
+import { expandCodeBlockAt } from "@shared/editor/nodes/CodeFence";
+import { unfoldToggleBlocksAt } from "@shared/editor/commands/toggleBlock";
+import { toggleFoldPluginKey } from "@shared/editor/nodes/ToggleBlock";
 import isTextInput from "~/utils/isTextInput";
 import FindAndReplace from "../components/FindAndReplace";
 import { deburrWithMap } from "./deburrWithMap";
@@ -43,7 +43,7 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
   keys(): Record<string, Command> {
     return {
       Escape: () => {
-        if (!this.searchTerm) {
+        if (!this.searchTerm || this.open) {
           return false;
         }
         this.handleEscape();
@@ -106,7 +106,7 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
   }
 
   public replace(replace: string): Command {
-    return (state, dispatch) => {
+    return action<Command>((state, dispatch) => {
       // Redo the search to ensure we have the latest results, the document may
       // have changed underneath us since the last search.
       this.search(state.doc);
@@ -121,11 +121,11 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
       dispatch?.(state.tr.insertText(replace, from, to).setMeta(pluginKey, {}));
 
       return true;
-    };
+    });
   }
 
   public replaceAll(replace: string): Command {
-    return (state, dispatch) => {
+    return action<Command>((state, dispatch) => {
       // Redo the search to ensure we have the latest results, the document may
       // have changed underneath us since the last search.
       this.search(state.doc);
@@ -144,7 +144,7 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
 
       dispatch?.(tr);
       return true;
-    };
+    });
   }
 
   public find(
@@ -152,7 +152,7 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
     caseSensitive = this.options.caseSensitive,
     regexEnabled = this.options.regexEnabled
   ): Command {
-    return (state, dispatch) => {
+    return action<Command>((state, dispatch) => {
       this.options.caseSensitive = caseSensitive;
       this.options.regexEnabled = regexEnabled;
       this.searchTerm = regexEnabled ? searchTerm : escapeRegExp(searchTerm);
@@ -164,11 +164,11 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
       this.scrollToCurrentMatch();
 
       return true;
-    };
+    });
   }
 
   public clear(): Command {
-    return (state, dispatch) => {
+    return action<Command>((state, dispatch) => {
       this.searchTerm = "";
       this.currentResultIndex = 0;
       this.results = [];
@@ -176,14 +176,14 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
 
       dispatch?.(state.tr.setMeta(pluginKey, {}));
       return true;
-    };
+    });
   }
 
   public openFindAndReplace(): Command {
-    return (state, dispatch) => {
+    return action<Command>((state, dispatch) => {
       dispatch?.(state.tr.setMeta(pluginKey, { open: true }));
       return true;
-    };
+    });
   }
 
   /**
@@ -204,7 +204,7 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
   }
 
   private goToMatch(direction: number): Command {
-    return (state, dispatch) => {
+    return action<Command>((state, dispatch) => {
       if (!this.results.length) {
         return false;
       }
@@ -228,7 +228,7 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
       this.expandCollapsedCodeBlockForCurrentMatch();
       this.scrollToCurrentMatch();
       return true;
-    };
+    });
   }
 
   private scrollToCurrentMatch() {
@@ -263,48 +263,8 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
       return;
     }
 
-    const state = this.editor.view.state;
-    const pluginState = toggleFoldPluginKey.getState(state);
-    if (!pluginState) {
-      return;
-    }
-
-    const $pos = state.doc.resolve(result.from);
-    const isToggle = isToggleBlock(state);
-
-    // Find all ancestor toggle block IDs that are folded
-    const foldedToggleIds = ancestors($pos)
-      .filter(
-        (node) => isToggle(node) && pluginState.foldedIds.has(node.attrs.id)
-      )
-      .map((node) => node.attrs.id as string);
-
-    // Unfold each toggle by ID (getting fresh state after each dispatch)
-    foldedToggleIds.forEach((toggleId) => {
-      const currentState = this.editor.view.state;
-
-      // Find the position of this toggle in the current document
-      let togglePos: number | null = null;
-      currentState.doc.descendants((node, pos) => {
-        if (
-          node.type.name === "container_toggle" &&
-          node.attrs.id === toggleId
-        ) {
-          togglePos = pos;
-          return false;
-        }
-        return true;
-      });
-
-      if (togglePos !== null) {
-        this.editor.view.dispatch(
-          currentState.tr.setMeta(toggleFoldPluginKey, {
-            type: Action.UNFOLD,
-            at: togglePos,
-          })
-        );
-      }
-    });
+    const view = this.editor.view;
+    unfoldToggleBlocksAt(result.from)(view.state, view.dispatch);
   }
 
   /**
@@ -316,7 +276,8 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
       return;
     }
 
-    this.editor.commands.expandCodeBlockAt(result.from);
+    const view = this.editor.view;
+    expandCodeBlockAt(result.from)(view.state, view.dispatch, view);
   }
 
   private rebaseNextResult(replace: string, index: number, lastOffset = 0) {
@@ -339,6 +300,7 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
     return offset;
   }
 
+  @action
   private search(doc: Node) {
     this.results = [];
     const mergedTextNodes: (
@@ -583,7 +545,7 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
   };
 
   private handleDocumentKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== "Escape" || !this.searchTerm) {
+    if (event.key !== "Escape" || !this.searchTerm || this.open) {
       return;
     }
     if (event.defaultPrevented) {
@@ -642,7 +604,7 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
 
           if (action) {
             if (action.open) {
-              this.open = true;
+              this.handleOpen();
             }
             this.search(tr.doc);
             return generation + 1;
@@ -705,7 +667,7 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
 
           if (action) {
             if (action.open) {
-              this.open = true;
+              this.handleOpen();
             }
             return this.createDecorationSet(tr.doc);
           }
@@ -731,14 +693,15 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
       totalResults={this.results.length}
       readOnly={readOnly}
       open={this.open}
-      onOpen={() => {
-        this.open = true;
-      }}
-      onClose={() => {
-        this.open = false;
-      }}
+      onOpen={this.handleOpen}
+      onClose={this.handleClose}
     />
   );
+
+  constructor(options: Partial<FindAndReplaceOptions> = {}) {
+    super(options);
+    makeObservable(this);
+  }
 
   @observable
   private open = false;
@@ -750,4 +713,14 @@ export default class FindAndReplaceExtension extends Extension<FindAndReplaceOpt
   private currentResultIndex = 0;
 
   private searchTerm = "";
+
+  @action.bound
+  private handleOpen() {
+    this.open = true;
+  }
+
+  @action.bound
+  private handleClose() {
+    this.open = false;
+  }
 }
